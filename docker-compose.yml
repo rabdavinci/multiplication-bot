@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  multiplication-bot:
+    build: .
+    container_name: multiplication-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DB_PATH=/app/data/multiplication_game.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; conn = sqlite3.connect('/app/data/multiplication_game.db'); print('DB OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Опционально: добавим pgAdmin для мониторинга (если перейдете на PostgreSQL)
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   restart: unless-stopped
+  #   environment:
+  #     - PGADMIN_DEFAULT_EMAIL=admin@example.com
+  #     - PGADMIN_DEFAULT_PASSWORD=password
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - multiplication-bot
