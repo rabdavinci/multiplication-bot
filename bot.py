@@ -11,13 +11,9 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Call
 
 # Настройка путей для Docker
 BASE_DIR = Path(__file__).parent
-DB_PATH = os.getenv('DB_PATH', str(BASE_DIR / 'data' / 'multiplication_game.db'))
+DB_PATH = os.getenv('DB_PATH', 'multiplication_game.db')  # Простое имя файла
 
-# Создаем директории если их нет
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-os.makedirs(BASE_DIR / 'logs', exist_ok=True)
-
-# Настройка логирования
+# Простая настройка логирования
 logging.basicConfig(
     level=os.getenv('LOG_LEVEL', 'INFO'),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -41,52 +37,55 @@ ACHIEVEMENTS = {
 }
 
 def init_database():
-    """Initialize the database"""
-    # Создаем директорию если не существует
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Create users table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        total_correct INTEGER DEFAULT 0,
-        total_attempts INTEGER DEFAULT 0,
-        total_points INTEGER DEFAULT 0,
-        level TEXT DEFAULT 'Новичок',
-        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-    
-    # Create achievements table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS achievements (
-        user_id INTEGER,
-        achievement_id TEXT,
-        achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, achievement_id),
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
-    )
-    ''')
-    
-    # Create daily activity table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS user_activity (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        points INTEGER,
-        activity_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
-    )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    """Initialize the database with error handling"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create users table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            total_correct INTEGER DEFAULT 0,
+            total_attempts INTEGER DEFAULT 0,
+            total_points INTEGER DEFAULT 0,
+            level TEXT DEFAULT 'Новичок',
+            last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Create achievements table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS achievements (
+            user_id INTEGER,
+            achievement_id TEXT,
+            achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, achievement_id),
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Create daily activity table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            points INTEGER,
+            activity_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Database initialized successfully at: {DB_PATH}")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise
 
 def get_user_level(points):
     """Determine user level based on points"""
@@ -105,89 +104,105 @@ def get_user_level(points):
 
 def update_user_stats(user_id, username, first_name, last_name, correct=False, points=0):
     """Update user statistics in database"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Check if user exists
-    cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-    if cursor.fetchone() is None:
-        # Create new user
-        cursor.execute('''
-        INSERT INTO users (user_id, username, first_name, last_name, total_correct, total_attempts, total_points)
-        VALUES (?, ?, ?, ?, 0, 0, 0)
-        ''', (user_id, username, first_name, last_name))
-    
-    # Update statistics
-    if correct:
-        cursor.execute('''
-        UPDATE users 
-        SET total_correct = total_correct + 1,
-            total_attempts = total_attempts + 1,
-            total_points = total_points + ?,
-            level = ?,
-            last_activity = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-        ''', (points, get_user_level(points), user_id))
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
         
-        # Record daily activity
-        cursor.execute('''
-        INSERT INTO user_activity (user_id, points)
-        VALUES (?, ?)
-        ''', (user_id, points))
-    else:
-        cursor.execute('''
-        UPDATE users 
-        SET total_attempts = total_attempts + 1,
-            last_activity = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-        ''', (user_id,))
-    
-    conn.commit()
-    conn.close()
+        # Check if user exists
+        cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+        if cursor.fetchone() is None:
+            # Create new user
+            cursor.execute('''
+            INSERT INTO users (user_id, username, first_name, last_name, total_correct, total_attempts, total_points)
+            VALUES (?, ?, ?, ?, 0, 0, 0)
+            ''', (user_id, username, first_name, last_name))
+        
+        # Update statistics
+        if correct:
+            cursor.execute('''
+            UPDATE users 
+            SET total_correct = total_correct + 1,
+                total_attempts = total_attempts + 1,
+                total_points = total_points + ?,
+                level = ?,
+                last_activity = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            ''', (points, get_user_level(points), user_id))
+            
+            # Record daily activity
+            cursor.execute('''
+            INSERT INTO user_activity (user_id, points)
+            VALUES (?, ?)
+            ''', (user_id, points))
+        else:
+            cursor.execute('''
+            UPDATE users 
+            SET total_attempts = total_attempts + 1,
+                last_activity = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            ''', (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"Error updating user stats: {e}")
 
 def get_global_rating(limit=10):
     """Get global rating of top users"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-    SELECT user_id, username, first_name, total_points, total_correct, total_attempts,
-           CASE WHEN total_attempts > 0 THEN (total_correct * 100.0 / total_attempts) ELSE 0 END as accuracy
-    FROM users 
-    WHERE total_attempts >= 5
-    ORDER BY total_points DESC 
-    LIMIT ?
-    ''', (limit,))
-    
-    results = cursor.fetchall()
-    conn.close()
-    return results
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        SELECT user_id, username, first_name, total_points, total_correct, total_attempts,
+               CASE WHEN total_attempts > 0 THEN (total_correct * 100.0 / total_attempts) ELSE 0 END as accuracy
+        FROM users 
+        WHERE total_attempts >= 5
+        ORDER BY total_points DESC 
+        LIMIT ?
+        ''', (limit,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        return results
+    except Exception as e:
+        logger.error(f"Error getting global rating: {e}")
+        return []
 
 def get_user_rank(user_id):
     """Get user's global rank"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-    SELECT COUNT(*) + 1 
-    FROM users 
-    WHERE total_points > (SELECT total_points FROM users WHERE user_id = ?)
-    AND total_attempts >= 5
-    ''', (user_id,))
-    
-    rank = cursor.fetchone()[0]
-    conn.close()
-    return rank
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        SELECT COUNT(*) + 1 
+        FROM users 
+        WHERE total_points > (SELECT total_points FROM users WHERE user_id = ?)
+        AND total_attempts >= 5
+        ''', (user_id,))
+        
+        rank = cursor.fetchone()[0]
+        conn.close()
+        return rank
+    except Exception as e:
+        logger.error(f"Error getting user rank: {e}")
+        return 0
 
 def get_total_users():
     """Get total number of active users"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT COUNT(*) FROM users WHERE total_attempts >= 5')
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM users WHERE total_attempts >= 5')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logger.error(f"Error getting total users: {e}")
+        return 0
 
 def main_menu_keyboard():
     """Create main menu keyboard with Russian text"""
@@ -283,24 +298,29 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 async def reset_score(update: Update, context: CallbackContext) -> None:
     """Reset user's score with Russian message"""
     user = update.effective_user
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('DELETE FROM users WHERE user_id = ?', (user.id,))
-    cursor.execute('DELETE FROM achievements WHERE user_id = ?', (user.id,))
-    cursor.execute('DELETE FROM user_activity WHERE user_id = ?', (user.id,))
-    
-    conn.commit()
-    conn.close()
-    
-    if 'score' in context.user_data:
-        context.user_data['score'] = {'correct': 0, 'total': 0, 'points': 0}
-    if 'achievements' in context.user_data:
-        context.user_data['achievements'] = {}
-    if 'reaction_time' in context.user_data:
-        context.user_data['reaction_time'] = []
-    
-    await update.message.reply_text("Прогресс сброшен! 🆕\nНачинаем заново! 🚀")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM users WHERE user_id = ?', (user.id,))
+        cursor.execute('DELETE FROM achievements WHERE user_id = ?', (user.id,))
+        cursor.execute('DELETE FROM user_activity WHERE user_id = ?', (user.id,))
+        
+        conn.commit()
+        conn.close()
+        
+        if 'score' in context.user_data:
+            context.user_data['score'] = {'correct': 0, 'total': 0, 'points': 0}
+        if 'achievements' in context.user_data:
+            context.user_data['achievements'] = {}
+        if 'reaction_time' in context.user_data:
+            context.user_data['reaction_time'] = []
+        
+        await update.message.reply_text("Прогресс сброшен! 🆕\nНачинаем заново! 🚀")
+        
+    except Exception as e:
+        logger.error(f"Error resetting score: {e}")
+        await update.message.reply_text("Ошибка при сбросе прогресса. Попробуйте позже.")
 
 def generate_wrong_answers(correct_answer: int) -> list:
     """Generate plausible wrong answers"""
@@ -405,16 +425,19 @@ async def check_answer(update: Update, context: CallbackContext) -> None:
         message = random.choice(incorrect_messages).format(correct_answer)
     
     # Show global rank update if user has enough attempts
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT total_attempts FROM users WHERE user_id = ?', (user.id,))
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result and result[0] >= 5 and is_correct:
-        global_rank = get_user_rank(user.id)
-        total_users = get_total_users()
-        message += f"\n\n🏆 Твой ранг: {global_rank}/{total_users}"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT total_attempts FROM users WHERE user_id = ?', (user.id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and result[0] >= 5 and is_correct:
+            global_rank = get_user_rank(user.id)
+            total_users = get_total_users()
+            message += f"\n\n🏆 Твой ранг: {global_rank}/{total_users}"
+    except Exception as e:
+        logger.error(f"Error showing rank: {e}")
     
     # Show answer result and options for next question
     difficulty = context.user_data.get('current_difficulty')
@@ -471,22 +494,26 @@ async def show_rating(update: Update, context: CallbackContext) -> None:
     user_id = user.id
     
     # Get user stats from database
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-    SELECT total_correct, total_attempts, total_points, level 
-    FROM users WHERE user_id = ?
-    ''', (user_id,))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result:
-        correct, attempts, points, level = result
-        accuracy = (correct / attempts * 100) if attempts > 0 else 0
-        global_rank = get_user_rank(user_id)
-        total_users = get_total_users()
-    else:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT total_correct, total_attempts, total_points, level 
+        FROM users WHERE user_id = ?
+        ''', (user_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            correct, attempts, points, level = result
+            accuracy = (correct / attempts * 100) if attempts > 0 else 0
+            global_rank = get_user_rank(user_id)
+            total_users = get_total_users()
+        else:
+            correct, attempts, points, accuracy, global_rank, total_users = 0, 0, 0, 0, 0, 0
+    except Exception as e:
+        logger.error(f"Error getting user rating: {e}")
         correct, attempts, points, accuracy, global_rank, total_users = 0, 0, 0, 0, 0, 0
     
     message = (
@@ -525,33 +552,37 @@ async def show_rating(update: Update, context: CallbackContext) -> None:
 
 async def daily_rating(update: Update, context: CallbackContext) -> None:
     """Show daily top players"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-    SELECT u.user_id, u.username, u.first_name, SUM(ua.points) as daily_points
-    FROM user_activity ua
-    JOIN users u ON ua.user_id = u.user_id
-    WHERE date(ua.activity_time) = date('now')
-    GROUP BY ua.user_id 
-    ORDER BY daily_points DESC 
-    LIMIT 10
-    ''')
-    
-    daily_top = cursor.fetchall()
-    conn.close()
-    
-    if not daily_top:
-        message = "📅 Сегодня еще никто не играл! Будь первым! 🚀"
-    else:
-        message = "📅 ТОП-10 ЗА СЕГОДНЯ\n\n"
-        for i, (user_id, username, first_name, points) in enumerate(daily_top, 1):
-            display_name = first_name or username or f"Игрок {user_id}"
-            if i <= 3:
-                medals = ["🥇", "🥈", "🥉"]
-                message += f"{medals[i-1]} {i}. {display_name} - {points} очков\n"
-            else:
-                message += f"{i}. {display_name} - {points} очков\n"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        SELECT u.user_id, u.username, u.first_name, SUM(ua.points) as daily_points
+        FROM user_activity ua
+        JOIN users u ON ua.user_id = u.user_id
+        WHERE date(ua.activity_time) = date('now')
+        GROUP BY ua.user_id 
+        ORDER BY daily_points DESC 
+        LIMIT 10
+        ''')
+        
+        daily_top = cursor.fetchall()
+        conn.close()
+        
+        if not daily_top:
+            message = "📅 Сегодня еще никто не играл! Будь первым! 🚀"
+        else:
+            message = "📅 ТОП-10 ЗА СЕГОДНЯ\n\n"
+            for i, (user_id, username, first_name, points) in enumerate(daily_top, 1):
+                display_name = first_name or username or f"Игрок {user_id}"
+                if i <= 3:
+                    medals = ["🥇", "🥈", "🥉"]
+                    message += f"{medals[i-1]} {i}. {display_name} - {points} очков\n"
+                else:
+                    message += f"{i}. {display_name} - {points} очков\n"
+    except Exception as e:
+        logger.error(f"Error getting daily rating: {e}")
+        message = "Ошибка при получении ежедневного рейтинга."
     
     await update.callback_query.edit_message_text(
         message,
@@ -564,24 +595,29 @@ async def daily_rating(update: Update, context: CallbackContext) -> None:
 async def show_achievements(update: Update, context: CallbackContext) -> None:
     """Show user achievements"""
     user = update.effective_user
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT achievement_id FROM achievements WHERE user_id = ?', (user.id,))
-    user_achievements = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    
-    message = "🏆 ТВОИ ДОСТИЖЕНИЯ\n\n"
-    obtained = 0
-    
-    for key, achievement in ACHIEVEMENTS.items():
-        if key in user_achievements:
-            message += f"✅ {achievement['name']} - {achievement['description']}\n"
-            obtained += 1
-        else:
-            message += f"🔒 {achievement['name']} - ???\n"
-    
-    message += f"\n🎯 Получено: {obtained}/{len(ACHIEVEMENTS)}"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT achievement_id FROM achievements WHERE user_id = ?', (user.id,))
+        user_achievements = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        
+        message = "🏆 ТВОИ ДОСТИЖЕНИЯ\n\n"
+        obtained = 0
+        
+        for key, achievement in ACHIEVEMENTS.items():
+            if key in user_achievements:
+                message += f"✅ {achievement['name']} - {achievement['description']}\n"
+                obtained += 1
+            else:
+                message += f"🔒 {achievement['name']} - ???\n"
+        
+        message += f"\n🎯 Получено: {obtained}/{len(ACHIEVEMENTS)}"
+        
+    except Exception as e:
+        logger.error(f"Error getting achievements: {e}")
+        message = "Ошибка при получении достижений."
     
     await update.callback_query.edit_message_text(
         message,
@@ -671,56 +707,61 @@ async def reset_score_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user = update.effective_user
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM users WHERE user_id = ?', (user.id,))
-    cursor.execute('DELETE FROM achievements WHERE user_id = ?', (user.id,))
-    cursor.execute('DELETE FROM user_activity WHERE user_id = ?', (user.id,))
-    conn.commit()
-    conn.close()
-    
-    if 'score' in context.user_data:
-        context.user_data['score'] = {'correct': 0, 'total': 0, 'points': 0}
-    if 'achievements' in context.user_data:
-        context.user_data['achievements'] = {}
-    
-    await query.edit_message_text("Прогресс сброшен! 🆕\nНачинаем заново! 🚀")
-    await asyncio.sleep(2)
-    await query.edit_message_text(
-        "Выбери режим игры:",
-        reply_markup=main_menu_keyboard()
-    )
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM users WHERE user_id = ?', (user.id,))
+        cursor.execute('DELETE FROM achievements WHERE user_id = ?', (user.id,))
+        cursor.execute('DELETE FROM user_activity WHERE user_id = ?', (user.id,))
+        conn.commit()
+        conn.close()
+        
+        if 'score' in context.user_data:
+            context.user_data['score'] = {'correct': 0, 'total': 0, 'points': 0}
+        if 'achievements' in context.user_data:
+            context.user_data['achievements'] = {}
+        
+        await query.edit_message_text("Прогресс сброшен! 🆕\nНачинаем заново! 🚀")
+        await asyncio.sleep(2)
+        await query.edit_message_text(
+            "Выбери режим игры:",
+            reply_markup=main_menu_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Error resetting score via button: {e}")
+        await query.edit_message_text("Ошибка при сбросе прогресса.")
 
 def main() -> None:
     """Start the bot"""
-    # Initialize database
-    init_database()
-    
-    # Create the Application
-    application = Application.builder().token(TOKEN).build()
-    
-    # Add command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("rating", show_rating))
-    application.add_handler(CommandHandler("top", show_global_rating))
-    application.add_handler(CommandHandler("daily", daily_rating))
-    application.add_handler(CommandHandler("reset", reset_score))
-    
-    # Add callback query handlers
-    application.add_handler(CallbackQueryHandler(button_handler, pattern='^(easy|medium|hard|competition|rating|global_rating|achievements|help|main_menu|confirm_reset|finish_competition)$'))
-    application.add_handler(CallbackQueryHandler(reset_score_button, pattern='^reset_score$'))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern='^competition_'))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern='^next_'))
-    application.add_handler(CallbackQueryHandler(check_answer, pattern='^answer_'))
-    
-    # Start the Bot
-    logger.info("Bot is starting...")
-    print("Bot is starting...")
-    print("Press Ctrl+C to stop the bot")
-    
     try:
+        # Initialize database
+        init_database()
+        
+        # Create the Application
+        application = Application.builder().token(TOKEN).build()
+        
+        # Add command handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("rating", show_rating))
+        application.add_handler(CommandHandler("top", show_global_rating))
+        application.add_handler(CommandHandler("daily", daily_rating))
+        application.add_handler(CommandHandler("reset", reset_score))
+        
+        # Add callback query handlers
+        application.add_handler(CallbackQueryHandler(button_handler, pattern='^(easy|medium|hard|competition|rating|global_rating|achievements|help|main_menu|confirm_reset|finish_competition)$'))
+        application.add_handler(CallbackQueryHandler(reset_score_button, pattern='^reset_score$'))
+        application.add_handler(CallbackQueryHandler(button_handler, pattern='^competition_'))
+        application.add_handler(CallbackQueryHandler(button_handler, pattern='^next_'))
+        application.add_handler(CallbackQueryHandler(check_answer, pattern='^answer_'))
+        
+        # Start the Bot
+        logger.info("Bot is starting...")
+        print("Bot is starting...")
+        print("Press Ctrl+C to stop the bot")
+        
         application.run_polling()
+        
     except Exception as e:
         logger.error(f"Bot crashed with error: {e}")
         raise
