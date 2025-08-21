@@ -46,6 +46,7 @@ def init_database():
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
+            chat_id INTEGER,
             username TEXT,
             first_name TEXT,
             last_name TEXT,
@@ -112,10 +113,15 @@ def update_user_stats(user_id, username, first_name, last_name, correct=False, p
         cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
         if cursor.fetchone() is None:
             # Create new user
+            chat_id = None
+            try:
+                chat_id = int(os.getenv('CURRENT_CHAT_ID', '0'))
+            except:
+                chat_id = 0
             cursor.execute('''
-            INSERT INTO users (user_id, username, first_name, last_name, total_correct, total_attempts, total_points)
-            VALUES (?, ?, ?, ?, 0, 0, 0)
-            ''', (user_id, username, first_name, last_name))
+            INSERT INTO users (user_id, chat_id, username, first_name, last_name, total_correct, total_attempts, total_points)
+            VALUES (?, ?, ?, ?, ?, 0, 0, 0)
+            ''', (user_id, chat_id, username, first_name, last_name))
         
         # Update statistics
         if correct:
@@ -255,10 +261,21 @@ def after_answer_keyboard(difficulty=None, competition=False):
 async def start(update: Update, context: CallbackContext) -> None:
     """Handle /start command with Russian text"""
     user = update.effective_user
+    # Store chat_id for broadcast
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE users SET chat_id = ? WHERE user_id = ?', (update.effective_chat.id, user.id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error saving chat_id: {e}")
     await update.message.reply_text(
         f"Привет {user.first_name}! 👋\n\n"
         "Я твой помощник в изучении таблицы умножения! 🧮\n"
         "Соревнуйся с другими игроками и поднимайся в рейтинге! 🏆\n\n"
+        "Каждый месяц приз $10 за первое место в рейтинге! 🎁\n"
+        "Следи за топом и участвуй!\n\n"
         "Выбери режим игры:",
         reply_markup=main_menu_keyboard()
     )
@@ -775,11 +792,68 @@ def main() -> None:
         application.add_handler(CallbackQueryHandler(button_handler, pattern='^next_'))
         application.add_handler(CallbackQueryHandler(check_answer, pattern='^answer_'))
         
+        # Start background tasks for daily and monthly notifications
+        async def daily_top_broadcast():
+            while True:
+                await asyncio.sleep(60*60*24)  # Run once a day
+                try:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT user_id, chat_id FROM users WHERE chat_id IS NOT NULL')
+                    users = cursor.fetchall()
+                    top_players = get_global_rating(3)
+                    if top_players:
+                        msg = "🏆 Ежедневный ТОП-3 игроков:\n\n"
+                        medals = ["🥇", "🥈", "🥉"]
+                        for i, (user_id, username, first_name, points, correct, attempts, accuracy) in enumerate(top_players, 1):
+                            name = first_name or username or f"Игрок {user_id}"
+                            msg += f"{medals[i-1]} {name} — {points} очков\n"
+                        for user_id, chat_id in users:
+                            if chat_id:
+                                try:
+                                    await application.bot.send_message(chat_id, msg)
+                                except Exception as e:
+                                    logger.error(f"Broadcast error: {e}")
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Daily broadcast error: {e}")
+        async def monthly_prize_broadcast():
+            while True:
+                now = datetime.now()
+                # Run at 23:59 on last day of month
+                if now.day == 28 and now.hour == 23 and now.minute >= 59:  # For demo, use 28th
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT user_id, chat_id FROM users WHERE chat_id IS NOT NULL')
+                        users = cursor.fetchall()
+                        top_players = get_global_rating(1)
+                        if top_players:
+                            winner = top_players[0]
+                            name = winner[2] or winner[1] or f"Игрок {winner[0]}"
+                            msg = f"🎉 Поздравляем! {name} занял первое место в месячном рейтинге и получает приз $10! Свяжитесь с админом для получения приза."
+                            chat_id = None
+                            for user_id, c_id in users:
+                                if user_id == winner[0]:
+                                    chat_id = c_id
+                                    break
+                            if chat_id:
+                                try:
+                                    await application.bot.send_message(chat_id, msg)
+                                except Exception as e:
+                                    logger.error(f"Prize error: {e}")
+                        conn.close()
+                    except Exception as e:
+                        logger.error(f"Monthly prize error: {e}")
+                await asyncio.sleep(60)  # Check every minute
         # Start the Bot
         logger.info("Bot is starting...")
         print("Bot is starting...")
         print("Press Ctrl+C to stop the bot")
-        
+        # Start background tasks
+        loop = asyncio.get_event_loop()
+        loop.create_task(daily_top_broadcast())
+        loop.create_task(monthly_prize_broadcast())
         application.run_polling()
         
     except Exception as e:
