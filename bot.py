@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Call
 
 # Настройка путей для Docker
 BASE_DIR = Path(__file__).parent
-DB_PATH = os.getenv('DB_PATH', 'multiplication_game.db')  # Простое имя файла
+DB_PATH = os.getenv('DB_PATH', 'multiplication_game.db')
 
 # Простая настройка логирования
 logging.basicConfig(
@@ -207,9 +207,10 @@ def get_total_users():
 def main_menu_keyboard():
     """Create main menu keyboard with Russian text"""
     keyboard = [
-        [InlineKeyboardButton("Легкий (1-5) 🟢", callback_data='easy')],
-        [InlineKeyboardButton("Средний (1-10) 🟡", callback_data='medium')],
-        [InlineKeyboardButton("Сложный (1-12) 🔴", callback_data='hard')],
+        [InlineKeyboardButton("Легкий (1-10) 🟢", callback_data='easy')],
+        [InlineKeyboardButton("Средний (2-15) 🟡", callback_data='medium')],
+        [InlineKeyboardButton("Сложный (5-50) 🔴", callback_data='hard')],
+        [InlineKeyboardButton("Гений (10-100) 🧠", callback_data='genius')],
         [InlineKeyboardButton("Соревнование ⏱️", callback_data='competition')],
         [InlineKeyboardButton("Мой рейтинг 📊", callback_data='rating')],
         [InlineKeyboardButton("Топ игроков 🏆", callback_data='global_rating')],
@@ -346,24 +347,39 @@ async def create_question(update: Update, context: CallbackContext, mode: str, d
     # Difficulty ranges
     ranges = {
         'easy': (1, 10),
-        'medium': (1, 20),
-        'hard': (1, 50)
+        'medium': (2, 15),
+        'hard': (5, 50),
+        'genius': (10, 100)
     }
     a, b = ranges[difficulty]
-    # Decide randomly between multiplication and division
-    if difficulty in ['easy', 'medium', 'hard'] and random.random() < 0.5:
-        # Division: ensure integer result
-        divisor = random.randint(2, b)
-        quotient = random.randint(a, b)
-        dividend = divisor * quotient
-        correct_answer = quotient
-        question_text = f"🧮 Чему равно {dividend} ÷ {divisor}?"
+    # Genius: always hard multiplication or division
+    if difficulty == 'genius':
+        if random.random() < 0.5:
+            # Division: ensure integer result
+            divisor = random.randint(10, b)
+            quotient = random.randint(10, b)
+            dividend = divisor * quotient
+            correct_answer = quotient
+            question_text = f"🧠 Чему равно {dividend} ÷ {divisor}?"
+        else:
+            num1 = random.randint(a, b)
+            num2 = random.randint(a, b)
+            correct_answer = num1 * num2
+            question_text = f"🧠 Что такое {num1} × {num2}?"
     else:
-        # Multiplication
-        num1 = random.randint(a, b)
-        num2 = random.randint(a, b)
-        correct_answer = num1 * num2
-        question_text = f"🧮 Что такое {num1} × {num2}?"
+        # For other levels, keep previous logic
+        if random.random() < 0.5:
+            # Division: ensure integer result
+            divisor = random.randint(max(2, a), b)
+            quotient = random.randint(a, b)
+            dividend = divisor * quotient
+            correct_answer = quotient
+            question_text = f"🧮 Чему равно {dividend} ÷ {divisor}?"
+        else:
+            num1 = random.randint(a, b)
+            num2 = random.randint(a, b)
+            correct_answer = num1 * num2
+            question_text = f"🧮 Что такое {num1} × {num2}?"
     # Store correct answer and start time
     context.user_data['correct_answer'] = correct_answer
     context.user_data['current_difficulty'] = difficulty
@@ -397,39 +413,17 @@ async def check_answer(update: Update, context: CallbackContext) -> None:
     start_time = context.user_data.get('question_time', time.time())
     answer_time = time.time() - start_time
     
-    # Difficulty ranges
-    if difficulty == 'easy':
-        a, b = 1, 5
-        num1 = random.randint(a, b)
-        num2 = random.randint(a, b)
-        correct_answer = num1 * num2
-    elif difficulty == 'medium':
-        a, b = 1, 10
-        num1 = random.randint(a, b)
-        num2 = random.randint(a, b)
-        correct_answer = num1 * num2
-    elif difficulty == 'hard':
-        # Make hard questions more complex: larger numbers and sometimes three factors
-        a, b = 6, 20
-        num1 = random.randint(a, b)
-        num2 = random.randint(a, b)
-        # 50% chance to add a third factor for extra challenge
-        if random.random() < 0.5:
-            num3 = random.randint(2, 10)
-            correct_answer = num1 * num2 * num3
-            question_text = f"🧮 Что такое {num1} × {num2} × {num3}?"
-        else:
-            correct_answer = num1 * num2
-            question_text = f"🧮 Что такое {num1} × {num2}?"
-        # Store for later use
-        context.user_data['question_text'] = question_text
-    else:
-        # Fallback to medium
-        a, b = 1, 10
-        num1 = random.randint(a, b)
-        num2 = random.randint(a, b)
-        correct_answer = num1 * num2
-    # Store correct answer and start time
+    # Calculate points
+    is_correct = user_answer == correct_answer
+    points = max(10, int(50 - answer_time * 10)) if is_correct else 0
+    
+    # Update global statistics
+    update_user_stats(
+        user.id, user.username, user.first_name, user.last_name,
+        is_correct, points
+    )
+    
+    # Russian feedback messages
     if is_correct:
         correct_messages = [
             "✅ Правильно! Отлично! 🎉",
@@ -439,58 +433,32 @@ async def check_answer(update: Update, context: CallbackContext) -> None:
             "✅ Фантастика! Звезда математики! ⭐ +{} очков!"
         ]
         message = random.choice(correct_messages).format(points)
-    # Compose question text for hard level if set above
-    if difficulty == 'hard' and 'question_text' in context.user_data:
-        question_text = context.user_data['question_text']
+        if answer_time < 3:
+            message += " ⚡ Быстро!"
     else:
-        if mode == 'competition':
-            remaining_time = context.user_data['competition_duration'] - (time.time() - context.user_data['start_time'])
-            question_text = f"⏱️ {int(remaining_time)}с | Что такое {num1} × {num2}?"
-        else:
-            question_text = f"🧮 Что такое {num1} × {num2}?"
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            question_text,
-            reply_markup=question_keyboard(all_answers, show_menu=(mode != 'competition'))
-        )
-    else:
-        await update.message.reply_text(
-            question_text,
-            reply_markup=question_keyboard(all_answers, show_menu=(mode != 'competition'))
-        )
+        incorrect_messages = [
+            "❌ Почти! Правильный ответ {}. Попробуй еще! 💪",
+            "❌ Не совсем! Это было {}. Следующий получится! 👍",
+            "❌ Хорошая попытка! Правильно было {}. Продолжай! 🏃‍♂️",
+            "❌ Близко! Ответ {}. Практика ведет к совершенству! 📚"
+        ]
+        message = random.choice(incorrect_messages).format(correct_answer)
+    
+    # Show global rank update if user has enough attempts
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT total_attempts FROM users WHERE user_id = ?', (user.id,))
         result = cursor.fetchone()
-        ranges = {
-            'easy': (1, 5),
-            'medium': (1, 50),
-            'hard': (1, 30)
-        }
-        a, b = ranges[difficulty]
-        if difficulty == 'hard':
-            # Randomly choose between multiplication and division
-            if random.random() < 0.5:
-                # Multiplication (possibly with three factors)
-                num1 = random.randint(a, b)
-                num2 = random.randint(a, b)
-                if random.random() < 0.5:
-                    num3 = random.randint(2, 10)
-                    correct_answer = num1 * num2 * num3
-                    question_text = f"🧮 Что такое {num1} × {num2} × {num3}?"
-                else:
-                    correct_answer = num1 * num2
-                    question_text = f"🧮 Что такое {num1} × {num2}?"
-            else:
-                # Division: ensure integer result
-                divisor = random.randint(2, b)
-                quotient = random.randint(2, b)
-                dividend = divisor * quotient
-                correct_answer = quotient
-                question_text = f"🧮 Чему равно {dividend} ÷ {divisor}?"
-            context.user_data['question_text'] = question_text
-        else:
-            num1 = random.randint(a, b)
-            num2 = random.randint(a, b)
-            correct_answer = num1 * num2
-        # Store correct answer and start time
+        conn.close()
+        
+        if result and result[0] >= 5 and is_correct:
+            global_rank = get_user_rank(user.id)
+            total_users = get_total_users()
+            message += f"\n\n🏆 Твой ранг: {global_rank}/{total_users}"
+    except Exception as e:
+        logger.error(f"Error showing rank: {e}")
+    
     # Show answer result and options for next question
     difficulty = context.user_data.get('current_difficulty')
     is_competition = context.user_data.get('mode') == 'competition'
@@ -500,25 +468,22 @@ async def check_answer(update: Update, context: CallbackContext) -> None:
         reply_markup=after_answer_keyboard(difficulty, is_competition)
     )
 
-        # Compose question text for hard level if set above
-        if difficulty == 'hard' and 'question_text' in context.user_data:
-            question_text = context.user_data['question_text']
-        else:
-            if mode == 'competition':
-                remaining_time = context.user_data['competition_duration'] - (time.time() - context.user_data['start_time'])
-                question_text = f"⏱️ {int(remaining_time)}с | Что такое {num1} × {num2}?"
-            else:
-                question_text = f"🧮 Что такое {num1} × {num2}?"
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                question_text,
-                reply_markup=question_keyboard(all_answers, show_menu=(mode != 'competition'))
-            )
-        else:
-            await update.message.reply_text(
-                question_text,
-                reply_markup=question_keyboard(all_answers, show_menu=(mode != 'competition'))
-            )
+async def next_question(update: Update, context: CallbackContext) -> None:
+    """Handle next question request"""
+    query = update.callback_query
+    await query.answer()
+    
+    difficulty = query.data.split('_')[1]
+    mode = context.user_data.get('mode', 'normal')
+    
+    await create_question(update, context, mode, difficulty)
+
+async def show_global_rating(update: Update, context: CallbackContext) -> None:
+    """Show global rating of top players"""
+    top_players = get_global_rating(15)
+    total_users = get_total_users()
+    
+    if not top_players:
         message = "🏆 Топ игроков\n\nПока никто не играл достаточно для рейтинга! Будь первым! 🚀"
     else:
         message = "🏆 ТОП-15 ИГРОКОВ\n\n"
@@ -715,7 +680,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     
-    if query.data in ['easy', 'medium', 'hard']:
+    if query.data in ['easy', 'medium', 'hard', 'genius']:
         await create_question(update, context, 'normal', query.data)
     elif query.data == 'competition':
         await query.edit_message_text(
